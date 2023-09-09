@@ -43,19 +43,19 @@ def title_extractor(line: str, lang: str) -> re.Match:
     elif lang == 'en':
         match = re.match('<title>(.*)<\/title>', line)
     elif lang == 'ru':
-        match = re.match('<title>(.*)<\/title>', line.)
+        match = re.match('<title>(.*)<\/title>', line)
     return match
 
 
-def ipa_extractor(line: str, lang: str) -> str:
+def ipa_extractor(line: str, source_language:str, target_language: str) -> str:
     """
     Extract IPA transcription from a line.
 
     """
-    if lang == 'de':
+    if source_language == 'de':
         # same regex for all languages in German
         ipa = re.match('^\:\{\{IPA\}\}.{1,3}\{\{Lautschrift\|([^\}]+)\}\}.*', line.strip())
-    elif lang == 'en':
+    elif source_language == 'en':
         # entries are various of this line: * {{a|US}} {{IPA|/ə.bɹʌpt/|/aˈbɹʌpt/|lang=en}}
         uk_test = 'RP' in line or 'UK' in line
         us_test = 'GA' in line or 'US' in line
@@ -66,12 +66,14 @@ def ipa_extractor(line: str, lang: str) -> str:
         elif target_language == 'en-uk':
             condition = 'en|' in line and ('IPA' in line or 'IPA-lite' in line) and (
                     (uk_test and us_test) or (uk_test and not us_test) or (not uk_test and not us_test))
+        elif target_language == 'en':
+            condition = 'en|' in line and ('IPA' in line or 'IPA-lite' in line)
         elif target_language == 'de':
             condition = 'de|' in line
         if condition:
-            ipa = re.match('^\*{1,3} {{[^\/]*\/([^\/]+?)\/[^}]*?}}', line.strip())
+            ipa = re.match('^\*{0,3}(?:.*){{[^\/]*\/([^\/]+?)\/[^}]*?}}', line.strip())
 
-    elif lang == 'ru':
+    elif source_language == 'ru':
         # {{transcriptions|jaːɐ̯ / jaːr|ˈjaːʁə / jaːrə|De-Jahr.ogg|De-Jahre.ogg}}
         ipa = None
         if 'transcription' in line and '|' in line:
@@ -79,7 +81,7 @@ def ipa_extractor(line: str, lang: str) -> str:
     return ipa
 
 
-def process(wikifile, outfile, gen_testset, do_remove_stress, lang, target_language):
+def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, target_language):
     written_out = 0
     time_start = time.time()
     with io.open(wikifile, 'r', encoding='utf-8') as wiki_in:
@@ -89,9 +91,8 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, lang, target_langu
                 if line[-1] == '\n':
                     line = line[:-1]
                 line = line.strip()
-
                 # start segment for the dictionary entry
-                match = title_extractor(line=line, lang=lang)
+                match = title_extractor(line=line, lang=source_language)
                 if ('==English==' in line):
                     found_english = True
 
@@ -104,10 +105,9 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, lang, target_langu
                         if len(word) > 1 and not word[-1] == '-' and not word[0] == '-':
                             word_cleaned = clean_word(word)
                             found_word = True
-
-                ipa = ipa_extractor(line, lang)
-
+                ipa = ipa_extractor(line, source_language=source_language, target_language=target_language)
                 if found_word and ipa:
+
                     phonemes = extract_phonemes(ipa.group(1), do_remove_stress)
                     # we identified the word for entry and could parse the phoneme entry:
                     if phonemes:
@@ -116,10 +116,10 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, lang, target_langu
                         if (written_out % 1000 == 0):
                             print('written: ', written_out, 'entries.')
                             print('%s lines per second.' % (n / (time.time() - time_start)))
-                            break
+
                 # If we see this somewhere in our input, we are already past the phoneme entry
                 if '=See also=' in line or '=Translations=' in line or '</page>' in line or '{{Beispiele}}' in line or '{{Referenzen}}' in line or '{{Quellen}}' in line:
-                    # found_word=False
+                    found_word=False
                     found_english = False
 
 
@@ -134,7 +134,7 @@ if __name__ == '__main__':
                         default=False)
     parser.add_argument('-r', '--remove-stress', dest='remove_stress', help='remove stress markers',
                         action='store_true', default=False)
-    parser.add_argument('-l', '--lang', dest='lang', help='Source dump language', default='de')
+    parser.add_argument('-l', '--lang', dest='source_language', help='Source dump language', default='de')
     parser.add_argument('-tl', '--target-language', dest='target_language', help='Target language', default='de')
     args = parser.parse_args()
-    process(args.file, args.outfile, args.gen_testset, args.remove_stress, args.lang, args.target_language)
+    process(args.file, args.outfile, args.gen_testset, args.remove_stress, args.source_language, args.target_language)
