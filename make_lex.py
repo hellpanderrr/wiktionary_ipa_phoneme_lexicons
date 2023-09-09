@@ -23,7 +23,10 @@ def remove_stress(phonemes):
 
 
 def extract_phonemes(ipa: str, do_remove_stress: bool) -> str:
-    # we identified the word for entry and could parse the phoneme entry:
+    """
+    Process ipa transcription into a dictionary line.
+
+    """
     if ipa is not None:
         if (not u'…' in ipa) and (not '...' in ipa):
             if do_remove_stress:
@@ -34,8 +37,49 @@ def extract_phonemes(ipa: str, do_remove_stress: bool) -> str:
             return phonemes
 
 
+def title_extractor(line: str, lang: str) -> re.Match:
+    if lang == 'de':
+        match = re.match('.*==(.*)\(\{\{Sprache\|Deutsch\}\}\) ==', line)
+    elif lang == 'en':
+        match = re.match('<title>(.*)<\/title>', line)
+    elif lang == 'ru':
+        match = re.match('<title>(.*)<\/title>', line.)
+    return match
+
+
+def ipa_extractor(line: str, lang: str) -> str:
+    """
+    Extract IPA transcription from a line.
+
+    """
+    if lang == 'de':
+        # same regex for all languages in German
+        ipa = re.match('^\:\{\{IPA\}\}.{1,3}\{\{Lautschrift\|([^\}]+)\}\}.*', line.strip())
+    elif lang == 'en':
+        # entries are various of this line: * {{a|US}} {{IPA|/ə.bɹʌpt/|/aˈbɹʌpt/|lang=en}}
+        uk_test = 'RP' in line or 'UK' in line
+        us_test = 'GA' in line or 'US' in line
+        ipa = None
+        if target_language == 'en-us':
+            condition = 'en|' in line and ('IPA' in line or 'IPA-lite' in line) and (
+                    (uk_test and us_test) or (us_test and not uk_test) or (not uk_test and not us_test))
+        elif target_language == 'en-uk':
+            condition = 'en|' in line and ('IPA' in line or 'IPA-lite' in line) and (
+                    (uk_test and us_test) or (uk_test and not us_test) or (not uk_test and not us_test))
+        elif target_language == 'de':
+            condition = 'de|' in line
+        if condition:
+            ipa = re.match('^\*{1,3} {{[^\/]*\/([^\/]+?)\/[^}]*?}}', line.strip())
+
+    elif lang == 'ru':
+        # {{transcriptions|jaːɐ̯ / jaːr|ˈjaːʁə / jaːrə|De-Jahr.ogg|De-Jahre.ogg}}
+        ipa = None
+        if 'transcription' in line and '|' in line:
+            ipa = re.match('{{[^|]*\|([^|]+?)\|[^}]*?}}', line.strip())
+    return ipa
+
+
 def process(wikifile, outfile, gen_testset, do_remove_stress, lang, target_language):
-    lang_count = defaultdict(int)
     written_out = 0
     time_start = time.time()
     with io.open(wikifile, 'r', encoding='utf-8') as wiki_in:
@@ -45,58 +89,23 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, lang, target_langu
                 if line[-1] == '\n':
                     line = line[:-1]
                 line = line.strip()
-                # print(f'[{line}]')
+
                 # start segment for the dictionary entry
-                if lang == 'de':
-                    match = re.match('.*==(.*)\(\{\{Sprache\|Deutsch\}\}\) ==', line.strip())
-                elif lang == 'en':
-                    match = re.match('<title>(.*)<\/title>', line.strip())
-                elif lang == 'ru':
-                    match = re.match('<title>(.*)<\/title>', line.strip())
+                match = title_extractor(line=line, lang=lang)
                 if ('==English==' in line):
                     found_english = True
 
                 if match:
-
                     word = match.group(1)
                     word = word.strip()
-
-                    # if word != 'politički':
-                    # continue
                     if not any((elem in word for elem in wordfilter)):
                         if len(word) > 20:
-                            1  # print(word)
+                            print(word)
                         if len(word) > 1 and not word[-1] == '-' and not word[0] == '-':
                             word_cleaned = clean_word(word)
                             found_word = True
-                            # print(word)
 
-                # regex to identify IPA entry
-                if lang == 'de':
-                    # same regex for all languages in German
-                    ipa = re.match('^\:\{\{IPA\}\}.{1,3}\{\{Lautschrift\|([^\}]+)\}\}.*', line.strip())
-                elif lang == 'en':
-
-                    # entries are various of this line: * {{a|US}} {{IPA|/ə.bɹʌpt/|/aˈbɹʌpt/|lang=en}}
-                    uk_test = 'RP' in line or 'UK' in line
-                    us_test = 'GA' in line or 'US' in line
-                    ipa = None
-                    if target_language == 'en-us':
-                        condition = 'en|' in line and ('IPA' in line or 'IPA-lite' in line) and (
-                                (uk_test and us_test) or (us_test and not uk_test) or (not uk_test and not us_test))
-                    elif target_language == 'en-uk':
-                        condition = 'en|' in line and ('IPA' in line or 'IPA-lite' in line) and (
-                                (uk_test and us_test) or (uk_test and not us_test) or (not uk_test and not us_test))
-                    elif target_language == 'de':
-                        condition = 'de|' in line
-                    if condition:
-                        ipa = re.match('^\*{1,3} {{[^\/]*\/([^\/]+?)\/[^}]*?}}', line.strip())
-
-                elif lang == 'ru':
-                    # {{transcriptions|jaːɐ̯ / jaːr|ˈjaːʁə / jaːrə|De-Jahr.ogg|De-Jahre.ogg}}
-                    ipa = None
-                    if 'transcription' in line and '|' in line:
-                        ipa = re.match('{{[^|]*\|([^|]+?)\|[^}]*?}}', line.strip())
+                ipa = ipa_extractor(line, lang)
 
                 if found_word and ipa:
                     phonemes = extract_phonemes(ipa.group(1), do_remove_stress)
