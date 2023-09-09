@@ -84,6 +84,7 @@ def ipa_extractor(line: str, source_language:str, target_language: str) -> str:
 def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, target_language):
     written_out = 0
     time_start = time.time()
+    pron_section_start = False
     with io.open(wikifile, 'r', encoding='utf-8') as wiki_in:
         with io.open(outfile, 'w', encoding='utf-8') as wiki_out:
             found_word = False
@@ -105,9 +106,20 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, t
                         if len(word) > 1 and not word[-1] == '-' and not word[0] == '-':
                             word_cleaned = clean_word(word)
                             found_word = True
-                ipa = ipa_extractor(line, source_language=source_language, target_language=target_language)
-                if found_word and ipa:
 
+                if pron_section_start and '===' in line:
+                    pron_section_start = False
+                if '===Pronunciation===' in line:
+                    # sometimes a comment tag has full wiki Markdown code as one line, which breaks the algorithm
+                    if '<comment>' in line:
+                        continue
+                    pron_section_start = True
+
+                ipa = None
+                if pron_section_start:
+                    ipa = ipa_extractor(line, source_language=source_language, target_language=target_language)
+
+                if found_word and ipa:
                     phonemes = extract_phonemes(ipa.group(1), do_remove_stress)
                     # we identified the word for entry and could parse the phoneme entry:
                     if phonemes:
