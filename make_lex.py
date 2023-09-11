@@ -30,36 +30,42 @@ def extract_phonemes(ipa: str, do_remove_stress: bool) -> str:
     if ipa is not None:
         if (not u'…' in ipa) and (not '...' in ipa):
             if do_remove_stress:
-                phonemes = remove_stress(ipa)
-            phonemes = phonemes.replace(' ', '').replace('.', '').replace('(', '').replace(')',
-                                                                                           '').replace(
+                ipa = remove_stress(ipa)
+            phonemes = ipa.replace(' ', '').replace('.', '').replace('(', '').replace(')',
+                                                                                      '').replace(
                 '[', '').replace(']', '')
             return phonemes
+    return ''
 
-
-def title_extractor(line: str, lang: str) -> re.Match:
+def title_extractor(line: str, lang: str, target_language: str) -> re.Match:
     if lang == 'de':
-        match = re.match('.*==(.*)\(\{\{Sprache\|Deutsch\}\}\) ==', line)
+        if target_language == 'de':
+            match = re.match(r'.*==(.*)\(\{\{Sprache\|Deutsch\}\}\) ==', line)
+        elif 'en' in target_language:
+            match = re.match(r'.*==(.*)\(\{\{Sprache\|Englisch\}\}\) ==', line)
+
     elif lang == 'en':
-        match = re.match('<title>(.*)<\/title>', line)
+        match = re.match(r'<title>(.*)<\/title>', line)
     elif lang == 'ru':
-        match = re.match('<title>(.*)<\/title>', line)
+        match = re.match(r'<title>(.*)<\/title>', line)
     return match
 
 
-def ipa_extractor(line: str, source_language:str, target_language: str) -> str:
+def ipa_extractor(line: str, source_language: str, target_language: str) -> re.Match:
     """
     Extract IPA transcription from a line.
 
     """
+    ipa = None
     if source_language == 'de':
         # same regex for all languages in German
-        ipa = re.match('^\:\{\{IPA\}\}.{1,3}\{\{Lautschrift\|([^\}]+)\}\}.*', line.strip())
+        if not 'spr=en' in line:
+            ipa = re.match(r'^\:\{\{IPA\}\}.{1,3}\{\{Lautschrift\|([^\}]+)\}\}.*', line.strip())
     elif source_language == 'en':
         # entries are various of this line: * {{a|US}} {{IPA|/ə.bɹʌpt/|/aˈbɹʌpt/|lang=en}}
         uk_test = 'RP' in line or 'UK' in line
         us_test = 'GA' in line or 'US' in line
-        ipa = None
+
         if target_language == 'en-us':
             condition = 'en|' in line and ('IPA' in line or 'IPA-lite' in line) and (
                     (uk_test and us_test) or (us_test and not uk_test) or (not uk_test and not us_test))
@@ -71,20 +77,51 @@ def ipa_extractor(line: str, source_language:str, target_language: str) -> str:
         elif target_language == 'de':
             condition = 'de|' in line
         if condition:
-            ipa = re.match('^\*{0,3}(?:.*){{[^\/]*\/([^\/]+?)\/[^}]*?}}', line.strip())
+            ipa = re.match(r'^\*{0,3}(?:.*){{[^\/]*\/([^\/]+?)\/[^}]*?}}', line.strip())
 
     elif source_language == 'ru':
         # {{transcriptions|jaːɐ̯ / jaːr|ˈjaːʁə / jaːrə|De-Jahr.ogg|De-Jahre.ogg}}
         ipa = None
         if 'transcription' in line and '|' in line:
-            ipa = re.match('{{[^|]*\|([^|]+?)\|[^}]*?}}', line.strip())
+            ipa = re.match(r'{{[^|]*\|([^|]+?)\|[^}]*?}}', line.strip())
     return ipa
+
+
+def end_of_tag_condition(line, source_language):
+    if '</page>' in line:
+        return True
+    if source_language == 'en':
+        return '=See also=' in line or '=Translations=' in line
+    if source_language == 'de':
+        return '{{Beispiele}}' in line or '{{Referenzen}}' in line or '{{Quellen}}' in line
+    if source_language == 'ru':
+        return '=== Семантические свойства ===' in line or '==== Значение ====' in line or '=== Родственные слова ===' in line
+    return False
+
+def pronunciation_section_condition(pron_section_start, line: str, source_language: str):
+    if pron_section_start:
+        # we encounter next section symbols, so pronunciation section ends
+        if source_language in ('en', 'ru'):
+            if line.startswith('==='):
+                return False
+    # we encounter pronunciation section symbols, so pronunciation section starts
+    if source_language == 'en':
+        if '===Pronunciation===' in line:
+            pron_section_start = True
+    elif source_language == 'ru':
+        if '=== Произношение ===' in line:
+            pron_section_start = True
+    return pron_section_start
 
 
 def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, target_language):
     written_out = 0
     time_start = time.time()
-    pron_section_start = False
+    pron_section_started = False
+    found_english = False
+    word_language_status = False
+    if not outfile:
+        outfile = f'{target_language}_IN_{source_language}.txt'
     with io.open(wikifile, 'r', encoding='utf-8') as wiki_in:
         with io.open(outfile, 'w', encoding='utf-8') as wiki_out:
             found_word = False
@@ -93,30 +130,39 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, t
                     line = line[:-1]
                 line = line.strip()
                 # start segment for the dictionary entry
-                match = title_extractor(line=line, lang=source_language)
-                if ('==English==' in line):
-                    found_english = True
+                match = title_extractor(line=line, lang=source_language, target_language=target_language)
 
                 if match:
                     word = match.group(1)
                     word = word.strip()
                     if not any((elem in word for elem in wordfilter)):
                         if len(word) > 20:
-                            print(word)
+                            1  # print(word)
                         if len(word) > 1 and not word[-1] == '-' and not word[0] == '-':
                             word_cleaned = clean_word(word)
                             found_word = True
 
-                if pron_section_start and '===' in line:
-                    pron_section_start = False
-                if '===Pronunciation===' in line:
-                    # sometimes a comment tag has full wiki Markdown code as one line, which breaks the algorithm
-                    if '<comment>' in line:
-                        continue
-                    pron_section_start = True
+                # sometimes a comment tag has full wiki Markdown code as one line, which breaks the algorithm
+                if '<comment>' in line:
+                    continue
 
+                def language_extractor(line, target_language, source_language):
+                    # Extract entry language name from the line.
+                    if source_language == 'ru':
+                        match = re.search(r'()(= {{-([a-z]{2,3})-\|?.*?}} =)', line)
+                        if match:
+                            word_language = match.group(3)
+                            if word_language == target_language:
+                                return True
+
+                if not word_language_status:
+                    word_language_status = language_extractor(line, target_language, source_language)
+
+                pron_section_started = pronunciation_section_condition(pron_section_started, line=line,
+                                                                       source_language=source_language)
                 ipa = None
-                if pron_section_start:
+                if ((source_language in ('en', 'ru') and pron_section_started) or (
+                not source_language in ('en', 'ru'))) and word_language_status:
                     ipa = ipa_extractor(line, source_language=source_language, target_language=target_language)
 
                 if found_word and ipa:
@@ -125,14 +171,16 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, t
                     if phonemes:
                         wiki_out.write(word_cleaned + u' ' + u' '.join(phonemes) + '\n')
                         written_out += 1
+                        found_english = False
                         if (written_out % 1000 == 0):
                             print('written: ', written_out, 'entries.')
                             print('%s lines per second.' % (n / (time.time() - time_start)))
 
                 # If we see this somewhere in our input, we are already past the phoneme entry
-                if '=See also=' in line or '=Translations=' in line or '</page>' in line or '{{Beispiele}}' in line or '{{Referenzen}}' in line or '{{Quellen}}' in line:
-                    found_word=False
+                if end_of_tag_condition(line, source_language):
+                    found_word = False
                     found_english = False
+                    word_language_status = False
 
 
 if __name__ == '__main__':
@@ -141,7 +189,7 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--file', dest='file', help='process this xml wiktionary lexicon file', type=str,
                         default='dewiktionary-latest-pages-articles-multistream.xml')
     parser.add_argument('-o', '--outfile', dest='outfile', help='lexicon out file', type=str,
-                        default='de_ipa_lexicon.txt')
+                        default=None)
     parser.add_argument('-t', '--gen-testset', dest='gen_testset', help='generate a testset', action='store_true',
                         default=False)
     parser.add_argument('-r', '--remove-stress', dest='remove_stress', help='remove stress markers',
