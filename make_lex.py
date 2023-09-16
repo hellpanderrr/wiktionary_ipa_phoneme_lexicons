@@ -37,17 +37,19 @@ def extract_phonemes(ipa: str, do_remove_stress: bool) -> str:
             return phonemes
     return ''
 
+
 def title_extractor(line: str, lang: str, target_language: str) -> re.Match:
     if lang == 'de':
         if target_language == 'de':
             match = re.match(r'.*==(.*)\(\{\{Sprache\|Deutsch\}\}\) ==', line)
         elif 'en' in target_language:
             match = re.match(r'.*==(.*)\(\{\{Sprache\|Englisch\}\}\) ==', line)
+        elif 'la' in target_language:
+            match = re.match(r'.*==(.*)\(\{\{Sprache\|Latein\}\}\) ==', line)
 
-    elif lang == 'en':
+    elif lang in ('en','ru','fr') :
         match = re.match(r'<title>(.*)<\/title>', line)
-    elif lang == 'ru':
-        match = re.match(r'<title>(.*)<\/title>', line)
+
     return match
 
 
@@ -59,7 +61,7 @@ def ipa_extractor(line: str, source_language: str, target_language: str) -> re.M
     ipa = None
     if source_language == 'de':
         # same regex for all languages in German
-        if not 'spr=en' in line:
+        if not 'spr=' in line:
             ipa = re.match(r'^\:\{\{IPA\}\}.{1,3}\{\{Lautschrift\|([^\}]+)\}\}.*', line.strip())
     elif source_language == 'en':
         # entries are various of this line: * {{a|US}} {{IPA|/ə.bɹʌpt/|/aˈbɹʌpt/|lang=en}}
@@ -84,19 +86,34 @@ def ipa_extractor(line: str, source_language: str, target_language: str) -> re.M
         ipa = None
         if 'transcription' in line and '|' in line:
             ipa = re.match(r'{{[^|]*\|([^|]+?)\|[^}]*?}}', line.strip())
+    elif source_language == 'fr':
+
+        ipa = re.match(r"'''\w+''' {{[^\|]*\|([^\|]+?)\|%s}}" % target_language, line.strip())
+        if ipa:
+            print(ipa,line)
     return ipa
 
 
 def end_of_tag_condition(line, source_language):
     if '</page>' in line:
         return True
+
     if source_language == 'en':
         return '=See also=' in line or '=Translations=' in line
+
     if source_language == 'de':
-        return '{{Beispiele}}' in line or '{{Referenzen}}' in line or '{{Quellen}}' in line
+        return any(keyword in line for keyword in ['{{Beispiele}}', '{{Referenzen}}', '{{Quellen}}'])
+
     if source_language == 'ru':
-        return '=== Семантические свойства ===' in line or '==== Значение ====' in line or '=== Родственные слова ===' in line
+        return any(keyword in line for keyword in
+                   ['=== Семантические свойства ===', '==== Значение ====', '=== Родственные слова ==='])
+
+    if source_language == 'fr':
+        return any(keyword in line for keyword in
+                   ['==== {{S|synonymes}} ====', '=== {{S|références}} ===', '===== {{S|dérivés}} ===='])
+
     return False
+
 
 def pronunciation_section_condition(pron_section_start, line: str, source_language: str):
     if pron_section_start:
@@ -129,6 +146,7 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, t
                 if line[-1] == '\n':
                     line = line[:-1]
                 line = line.strip()
+
                 # start segment for the dictionary entry
                 match = title_extractor(line=line, lang=source_language, target_language=target_language)
 
@@ -154,6 +172,14 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, t
                             word_language = match.group(3)
                             if word_language == target_language:
                                 return True
+                    elif source_language == 'fr':
+                        match = re.search(r'== {{langue\|([a-z]{1,3})}}', line)
+                        if match:
+                            word_language = match.group(1)
+                            if word_language == target_language:
+                                return True
+                    else:
+                        return True
 
                 if not word_language_status:
                     word_language_status = language_extractor(line, target_language, source_language)
@@ -162,7 +188,7 @@ def process(wikifile, outfile, gen_testset, do_remove_stress, source_language, t
                                                                        source_language=source_language)
                 ipa = None
                 if ((source_language in ('en', 'ru') and pron_section_started) or (
-                not source_language in ('en', 'ru'))) and word_language_status:
+                        not source_language in ('en', 'ru'))) and word_language_status:
                     ipa = ipa_extractor(line, source_language=source_language, target_language=target_language)
 
                 if found_word and ipa:
